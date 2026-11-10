@@ -8,6 +8,7 @@ import {
   LeagueWebSocket,
 } from "league-connect";
 import { BrowserWindow } from "electron";
+import { GradeCapture, RESULT_PHASES, RIOT_GRADE_SOURCE } from "./riot-grade";
 import * as db from "./db";
 import { sendToRenderer } from "./ipc";
 import { findClient, installDirCandidates } from "./lockfile";
@@ -924,9 +925,24 @@ function startCapture(win: BrowserWindow, gameId: number, queueId: number): void
   captureEogGame(win, gameId, 0);
 }
 
+let gradeCapture: GradeCapture | null = null;
+function grades(win: BrowserWindow) {
+  return (gradeCapture ??= new GradeCapture(lcuJson, (grade) => {
+    if (db.saveRiotGrade(grade)) {
+      console.log(`Stored Riot grade for game ${grade.game_id}`);
+      sendToRenderer(win, "lcu:games-updated");
+    }
+  }));
+}
+
 function handleFrame(win: BrowserWindow, payload: any): void {
   const raw = String(payload?.uri ?? "");
   const path = raw.startsWith("/") ? raw.slice(1) : raw;
+
+  if (path === RIOT_GRADE_SOURCE.slice(1) || path === EOG_STATS_PATHS[0]) {
+    if (payload.eventType === "Delete" || !payload.data) grades(win).stop();
+    else grades(win).trigger();
+  }
 
   if (path === GAMEFLOW_SESSION_PATH) {
     // Only ever set, never cleared: the session drops back to an empty game
@@ -941,6 +957,9 @@ function handleFrame(win: BrowserWindow, payload: any): void {
 
   if (path === GAMEFLOW_PHASE_PATH) {
     applyPhase(win, typeof payload.data === "string" ? payload.data : null);
+
+    if (RESULT_PHASES.has(payload.data)) grades(win).trigger();
+    else grades(win).stop();
 
     if (payload.data === "EndOfGame" && liveGame) {
       startCapture(win, liveGame.gameId, liveGame.queueId);
@@ -1006,7 +1025,11 @@ async function attachEogListener(win: BrowserWindow): Promise<void> {
     // A socket outlives a poll that failed, and reconnecting puts the status
     // back to plain "connected". Nothing else would notice a match that was
     // already running, since the socket reports changes and misses none.
-    if (eogSocket) applyPhase(win, await fetchGameflowPhase());
+    if (eogSocket) {
+      const phase = await fetchGameflowPhase();
+      applyPhase(win, phase);
+      if (phase && RESULT_PHASES.has(phase)) grades(win).trigger();
+    }
     return;
   }
   eogAttaching = true;
@@ -1054,7 +1077,12 @@ async function attachEogListener(win: BrowserWindow): Promise<void> {
 
     // The socket only carries changes, so a client that was already in a match
     // when we attached needs the current phase read once.
-    fetchGameflowPhase().then((phase) => applyPhase(win, phase));
+    fetchGameflowPhase().then((phase) => {
+      applyPhase(win, phase);
+      if (phase && RESULT_PHASES.has(phase)) grades(win).trigger();
+    });
+    // Capture results already open when the tracker attaches, even if the phase is late.
+    grades(win).trigger();
   } finally {
     eogAttaching = false;
   }
@@ -1077,6 +1105,8 @@ async function handleSocketDrop(win: BrowserWindow) {
 }
 
 function stopEogListener() {
+  gradeCapture?.stop();
+  gradeCapture = null;
   if (eogSocket) {
     // Cleared first so the close handler, which checks identity, doesn't race
     // a listener attached by a later reconnect

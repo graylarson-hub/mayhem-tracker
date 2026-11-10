@@ -17,6 +17,7 @@ import type {
   GameAugment,
 } from "../../shared/api";
 import { db } from "./connection";
+import { RIOT_GRADE_MATCH_SQL } from "./riot-grades";
 import { SEASONS } from "../../shared/seasons";
 import { hideRemakes, applyQueueFilter, applySeasonFilter } from "./filters";
 import { getSetting } from "./settings";
@@ -42,6 +43,7 @@ export const MATCH_ROW_SQL = `
       ps.champion_id, ps.win, ps.kills, ps.deaths, ps.assists,
       ps.double_kills, ps.triple_kills, ps.quadra_kills, ps.penta_kills,
       ps.total_damage_dealt, ps.total_damage_taken, ps.total_heal, ps.gold_earned,
+      ${RIOT_GRADE_MATCH_SQL} as riot_grade,
       ps.score, ps.score_badge, ps.spell1, ps.spell2,
       ps.item0, ps.item1, ps.item2, ps.item3, ps.item4, ps.item5,
       (SELECT GROUP_CONCAT(ga.augment_id) FROM game_augments ga
@@ -464,7 +466,8 @@ export function getMatchDetail(gameId: number): MatchDetail | null {
     .get(gameId) as GameRecord | undefined;
   if (!game) return null;
   const stats = db
-    .prepare("SELECT * FROM player_stats WHERE game_id = ?")
+    .prepare(`SELECT ps.*, ${RIOT_GRADE_MATCH_SQL} as riot_grade
+      FROM player_stats ps JOIN games g ON g.game_id = ps.game_id WHERE ps.game_id = ?`)
     .get(gameId) as PlayerStatsRecord;
   const augments = db
     .prepare("SELECT * FROM game_augments WHERE game_id = ? ORDER BY slot")

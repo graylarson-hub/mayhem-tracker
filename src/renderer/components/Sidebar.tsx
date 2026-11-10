@@ -42,6 +42,7 @@ const links: { to: string; label: string; icon: IconComponent }[] = [
   { to: "/records", label: "Records", icon: MedalIcon },
   { to: "/season", label: "Season Recap", icon: CalendarIcon },
   { to: "/challenges", label: "Challenges", icon: AwardIcon },
+  { to: "/s-tracker", label: "S- Tracker", icon: TrophyIcon },
   { to: "/global", label: "Total Stats", icon: GlobeIcon },
 ];
 

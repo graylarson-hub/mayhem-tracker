@@ -21,7 +21,10 @@ export async function writeExportTo(filePath: string): Promise<number> {
   let count = 0;
   try {
     const summoners = db.prepare("SELECT * FROM summoner").all();
-    await write(`{"version":3,"summoners":${JSON.stringify(summoners)},"games":[`);
+    const grades = db.prepare("SELECT * FROM riot_grades ORDER BY game_id").all();
+    await write(
+      `{"version":4,"riot_grades":${JSON.stringify(grades)},"summoners":${JSON.stringify(summoners)},"games":[`,
+    );
 
     // Keyset paging, not LIMIT/OFFSET: each query completes before the next
     // await, so no statement is left open across one — a statement still

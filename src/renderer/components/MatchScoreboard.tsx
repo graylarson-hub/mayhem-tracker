@@ -77,6 +77,12 @@ export default function MatchScoreboard({
 
   return (
     <div className="space-y-3">
+      <div
+        className="text-xs text-lol-text"
+        title="Local player only. Riot letter grades are separate from the calculated Mayhem scores below."
+      >
+        Your Riot grade: {detail.stats.riot_grade ?? "not captured"}
+      </div>
       {Array.from(teams.entries()).map(([teamId, players]) => (
         <TeamScoreboard
           key={teamId}

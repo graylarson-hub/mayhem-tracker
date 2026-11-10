@@ -1,6 +1,6 @@
 {
   "name": "mayhem-tracker",
-  "version": "1.15.0",
+  "version": "1.15.1-riot-grades.1",
   "description": "ARAM Mayhem match history tracker",
   "license": "MIT",
   "main": "./out/main/index.js",
@@ -15,7 +15,8 @@
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "gen:augments": "node scripts/generate-augment-descriptions.mjs"
+    "gen:augments": "node scripts/generate-augment-descriptions.mjs",
+    "test:grades": "node scripts/test-riot-grades.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
@@ -40,6 +41,12 @@
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^7.3.6"
+  },
+  "allowScripts": {
+    "better-sqlite3@13.0.3": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "electron-winstaller@5.4.0": true
   },
   "build": {
     "appId": "com.mayhem-tracker.app",
