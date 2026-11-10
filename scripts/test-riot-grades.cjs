@@ -46,11 +46,28 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     gameDuration: 900,
     gameVersion: "16.22.1",
     participants: [
-      { participantId: 1, puuid: "fixture-owner", championId: 150, teamId: 100,
-        stats: { win: true, kills: 7, deaths: 3, assists: 15,
-          totalDamageDealtToChampions: 14000, totalDamageTaken: 18000, goldEarned: 12000 } },
-      { participantId: 2, puuid: "fixture-opponent", championId: 17, teamId: 200,
-        stats: { win: false, kills: 3, deaths: 7, assists: 5 } },
+      {
+        participantId: 1,
+        puuid: "fixture-owner",
+        championId: 150,
+        teamId: 100,
+        stats: {
+          win: true,
+          kills: 7,
+          deaths: 3,
+          assists: 15,
+          totalDamageDealtToChampions: 14000,
+          totalDamageTaken: 18000,
+          goldEarned: 12000,
+        },
+      },
+      {
+        participantId: 2,
+        puuid: "fixture-opponent",
+        championId: 17,
+        teamId: 200,
+        stats: { win: false, kills: 3, deaths: 7, assists: 5 },
+      },
     ],
   };
   assert.equal(m.insertGameFull(syntheticGame, "fixture-owner"), true);
