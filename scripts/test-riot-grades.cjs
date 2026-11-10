@@ -1,13 +1,11 @@
-// Offline integration tests use a copy of the user's v4 database, never the live DB.
+// Offline integration tests use synthetic match data, never a user database.
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 const esbuild = require("esbuild");
 const root = path.resolve(__dirname, "..");
-const testDir = path.resolve(root, "../../work/grade-tests");
-fs.mkdirSync(testDir, { recursive: true });
-const fixture = process.argv[2];
-if (!fixture) throw Error("Pass the pre-migration SQLite snapshot path");
-fs.copyFileSync(path.resolve(fixture), path.join(testDir, "matches.db"));
+const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "mayhem-grade-tests-"));
+process.on("exit", () => fs.rmSync(testDir, { recursive: true, force: true }));
 esbuild.buildSync({
   stdin: {
     contents: `export * from './src/main/riot-grade';
@@ -33,20 +31,46 @@ Module._load = function (name, ...args) {
 };
 // paths.ts uses a data subdirectory for packaged apps.
 fs.mkdirSync(path.join(testDir, "data"), { recursive: true });
-fs.copyFileSync(path.join(testDir, "matches.db"), path.join(testDir, "data/matches.db"));
 const m = require(path.join(testDir, "modules.cjs"));
 const assert = require("assert/strict");
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 (async () => {
+  // Build a synthetic v4 database without accessing anyone's match history.
   m.initDatabase();
   let db = m.getDatabase();
+  const syntheticGame = {
+    gameId: 90000000000,
+    queueId: 450,
+    gameMode: "ARAM",
+    gameCreation: 1760000000000,
+    gameDuration: 900,
+    gameVersion: "16.22.1",
+    participants: [
+      { participantId: 1, puuid: "fixture-owner", championId: 150, teamId: 100,
+        stats: { win: true, kills: 7, deaths: 3, assists: 15,
+          totalDamageDealtToChampions: 14000, totalDamageTaken: 18000, goldEarned: 12000 } },
+      { participantId: 2, puuid: "fixture-opponent", championId: 17, teamId: 200,
+        stats: { win: false, kills: 3, deaths: 7, assists: 5 } },
+    ],
+  };
+  assert.equal(m.insertGameFull(syntheticGame, "fixture-owner"), true);
+  m.closeDatabase();
+  const D = require(path.join(root, "node_modules/better-sqlite3"));
+  const databasePath = path.join(testDir, "data", "matches.db");
+  const v4 = new D(databasePath);
+  v4.exec("DROP TABLE riot_grades");
+  v4.pragma("user_version = 4");
+  v4.close();
+  const fixture = path.join(testDir, "fixture-v4.db");
+  fs.copyFileSync(databasePath, fixture);
+  m.initDatabase();
+  db = m.getDatabase();
   assert.equal(db.pragma("user_version", { simple: true }), 5);
   assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
   const count = db.prepare("SELECT COUNT(*) n FROM games").get().n;
-  assert.equal(count, 623);
+  assert.equal(count, 1);
   const before = db.prepare("SELECT * FROM player_stats ORDER BY game_id").all();
-  const D = require(path.join(root, "node_modules/better-sqlite3"));
-  const originalDb = new D(path.resolve(fixture), { readonly: true });
+  const originalDb = new D(fixture, { readonly: true });
   assert.deepEqual(before, originalDb.prepare("SELECT * FROM player_stats ORDER BY game_id").all());
   originalDb.close();
   m.closeDatabase();
@@ -54,7 +78,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   db = m.getDatabase();
   assert.deepEqual(db.prepare("SELECT * FROM player_stats ORDER BY game_id").all(), before);
   assert.equal(db.prepare("SELECT COUNT(*) n FROM riot_grades").get().n, 0);
-  console.log("PASS v4 -> v5 migration, 623 games preserved, idempotent reopen");
+  console.log("PASS v4 -> v5 migration, synthetic game preserved, idempotent reopen");
 
   const mastery = { gameId: 90000000001, championId: 150, grade: " a+ ", other: { grade: "S" } };
   const stats = {
@@ -81,7 +105,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     "PASS root-only validation, game/champion/session mismatch, normalization, dedup, ARAM without history",
   );
 
-  // Delayed ingestion: reuse a real payload under an explicitly synthetic ID.
+  // Delayed ingestion: reuse the synthetic payload under another ID.
   const zlib = require("zlib");
   const originalGame = db.prepare("SELECT * FROM games WHERE raw_gz IS NOT NULL LIMIT 1").get();
   const payload = JSON.parse(zlib.gunzipSync(originalGame.raw_gz));
