@@ -39,3 +39,6 @@ jobs:
       # anything that only fails once the bundler resolves it.
       - name: Build
         run: npm run build
+
+      - name: Riot grade integration tests
+        run: npm run test:grades
