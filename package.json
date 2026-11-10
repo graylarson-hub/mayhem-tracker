@@ -15,7 +15,8 @@
     "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "format": "oxfmt",
     "format:check": "oxfmt --check",
-    "gen:augments": "node scripts/generate-augment-descriptions.mjs"
+    "gen:augments": "node scripts/generate-augment-descriptions.mjs",
+    "test:grades": "node scripts/test-riot-grades.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",
