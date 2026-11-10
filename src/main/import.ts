@@ -184,10 +184,18 @@ export async function importBackupFile(file: string, win: BrowserWindow | null):
     const ownerOf = (game: any): string | null =>
       version >= 3 ? game?._ownerPuuid || fallbackOwner : fallbackOwner;
 
+    const grades = version >= 4 ? (read("riot_grades") ?? []) : [];
+    if (!Array.isArray(grades)) throw new Error("Invalid riot_grades export");
+
     // Snapshot first: an import writes into every table, and this is the last
     // moment the database is known to be in the state the user chose it from.
     await backupQuietly("pre-import");
+    // Grade-only records are imported even when no tracked match exists.
+    db.getDatabase().transaction(() => {
+      for (const grade of grades) db.saveRiotGrade(grade);
+    })();
     db.importSummoners(accounts);
+    if (grades.length) sendToRenderer(win, "lcu:games-updated");
 
     let current = 0;
     let imported = 0;

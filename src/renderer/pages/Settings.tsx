@@ -474,7 +474,7 @@ export default function Settings() {
             <div>
               <p className="text-sm text-lol-text-bright">Export data</p>
               <p className="text-xs text-lol-text mt-0.5">
-                Save all match data to a JSON file for backup
+                Save match data and captured Riot grades (including regular ARAM) to JSON
               </p>
             </div>
             <button

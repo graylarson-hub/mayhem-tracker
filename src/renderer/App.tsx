@@ -11,6 +11,7 @@ import Trends from "./pages/Trends";
 import Records from "./pages/Records";
 import SeasonRecap from "./pages/SeasonRecap";
 import Challenges from "./pages/Challenges";
+import STracker from "./pages/STracker";
 import GlobalStats from "./pages/GlobalStats";
 import GlobalChampionDetail from "./pages/GlobalChampionDetail";
 import Settings from "./pages/Settings";
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/records" element={<Records />} />
           <Route path="/season" element={<SeasonRecap />} />
           <Route path="/challenges" element={<Challenges />} />
+          <Route path="/s-tracker" element={<STracker />} />
           <Route path="/global" element={<GlobalStats />} />
           <Route path="/global/champion/:championId" element={<GlobalChampionDetail />} />
           <Route path="/settings" element={<Settings />} />

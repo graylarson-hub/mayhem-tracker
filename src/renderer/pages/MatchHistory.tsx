@@ -1185,6 +1185,12 @@ function GameRow({
           <div className="text-sm text-lol-text-bright truncate">
             {getChampionName(champData, match.champion_id)}
           </div>
+          <div
+            className="text-[10px] text-lol-text"
+            title="Riot letter grade, captured live; separate from Mayhem score"
+          >
+            Riot: {match.riot_grade ?? "not captured"}
+          </div>
         </div>
         <div className="w-24 shrink-0">
           <div className="text-sm text-lol-text-bright">

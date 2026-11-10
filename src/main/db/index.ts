@@ -1,3 +1,4 @@
+export { saveRiotGrade } from "./riot-grades";
 export { getDbPath, closeDatabase, getDatabase } from "./connection";
 export { getSetting, setSetting } from "./settings";
 export { getStoredQueues, seasonWindow } from "./filters";

@@ -13,11 +13,9 @@ export function getDbPath() {
 export function openDatabase() {
   db = new Database(getDbPath());
   db.pragma("journal_mode = WAL");
-  // NORMAL is the standard companion to WAL: commits stop waiting on an fsync,
-  // which is what makes a several-thousand-game backfill bearable. The only
-  // exposure is losing the most recent commits to an OS crash, and everything
-  // here is re-fetchable from the client.
-  db.pragma("synchronous = NORMAL");
+  // Grades cannot be re-fetched after dismissal. FULL syncs each WAL commit,
+  // trading some bulk-ingest speed for durability of these live-only records.
+  db.pragma("synchronous = FULL");
   db.pragma("foreign_keys = ON");
 }
 

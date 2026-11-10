@@ -1,5 +1,6 @@
 import { QUEUE_ID_MAYHEM_CLASSIC } from "../../shared/queues";
 import zlib from "zlib";
+import { RIOT_GRADES_SCHEMA } from "./riot-grades";
 import { db } from "./connection";
 import {
   PAYLOAD_PAGE_SIZE,
@@ -24,7 +25,7 @@ export function migrateHiddenQueues() {
 // versioning, so it could be missing any subset of the columns v1 adds — which
 // is why each step checks for its column rather than assuming. A database that
 // createTables just built is also version 0, and lands on the same no-op path.
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 function tableColumns(table: string): Set<string> {
   const rows = db.pragma(`table_info(${table})`) as { name: string }[];
@@ -40,7 +41,11 @@ export function runMigrations() {
   if (current < 3) migrateToV3();
   if (current < 4) migrateToV4();
 
-  db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  // Atomic v5 migration: retain all existing tables and data.
+  db.transaction(() => {
+    if (current < 5) db.exec(RIOT_GRADES_SCHEMA);
+    db.pragma(`user_version = ${SCHEMA_VERSION}`);
+  })();
 }
 
 // Brings pre-versioning databases up to the schema createTables now declares.

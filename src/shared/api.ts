@@ -25,6 +25,7 @@ export interface GameRecord {
 }
 
 export interface PlayerStatsRecord {
+  riot_grade?: string | null;
   game_id: number;
   champion_id: number;
   win: number;
@@ -64,6 +65,7 @@ export interface GameAugment {
 }
 
 export interface MatchListItem {
+  riot_grade?: string | null;
   game_id: number;
   queue_id: number;
   game_creation: number;
