@@ -16,7 +16,9 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "gen:augments": "node scripts/generate-augment-descriptions.mjs",
-    "test:grades": "node scripts/test-riot-grades.cjs"
+    "test:grades": "node scripts/test-riot-grades.cjs",
+    "test:availability": "node scripts/test-availability.cjs",
+    "test:reconciliation": "node scripts/test-reconciliation.cjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.0.3",

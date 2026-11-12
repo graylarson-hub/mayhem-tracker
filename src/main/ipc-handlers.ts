@@ -38,6 +38,7 @@ function senderWindow(event: { sender: Electron.WebContents }): BrowserWindow | 
 }
 
 export function registerIpcHandlers() {
+  handle("getChampionAvailability", () => lcu.getChampionAvailability());
   handle("getMatchHistory", (_event, limit, offset, filters) =>
     db.getMatchHistory(limit, offset, filters),
   );

@@ -6,9 +6,9 @@ import { getChampionName, useChampionData } from "../hooks/useChampions";
 import { useLcuStatus } from "../hooks/useLcuStatus";
 import { LOCALE } from "../lib/format";
 import { matchesSearch } from "../lib/search";
-import type { ChallengesResult } from "../lib/types";
+import type { ChampionAvailability, ChallengesResult } from "../lib/types";
 
-type CompletionFilter = "all" | "needed" | "earned";
+type CompletionFilter = "all" | "needed" | "earned" | "available";
 
 const completionFilters: {
   key: CompletionFilter;
@@ -33,6 +33,12 @@ const completionFilters: {
     label: "Earned",
     color: "text-yellow-400",
     activeColor: "bg-yellow-500/20 text-yellow-300 border-yellow-500/50",
+  },
+  {
+    key: "available",
+    label: "Available",
+    color: "text-emerald-400",
+    activeColor: "bg-emerald-500/20 text-emerald-300 border-emerald-400/50",
   },
 ];
 
@@ -73,6 +79,40 @@ export default function STracker() {
     };
   }, [status]);
 
+  const [availability, setAvailability] = useState<ChampionAvailability>({
+    state: "inactive",
+    currentChampionId: null,
+    benchChampionIds: [],
+  });
+  useEffect(() => {
+    let active = true;
+    let receivedLive = false;
+    const unsubscribe = window.api.onChampionAvailability((value) => {
+      receivedLive = true;
+      if (active) setAvailability(value);
+    });
+    window.api
+      .getChampionAvailability()
+      .then((value) => {
+        if (active && !receivedLive) setAvailability(value);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+  const availableIds = useMemo(
+    () =>
+      new Set(
+        availability.state === "active"
+          ? [availability.currentChampionId, ...availability.benchChampionIds].filter(
+              (id): id is number => id !== null,
+            )
+          : [],
+      ),
+    [availability],
+  );
   const data = result?.data;
   const challenge = data
     ? [
@@ -86,7 +126,7 @@ export default function STracker() {
   const { roster, remaining, completed, visible } = useMemo(() => {
     const done = new Set(completedIds ?? []);
     // Keep newly released completed champions visible even with older metadata.
-    const roster = [...new Set([...Object.keys(champions).map(Number), ...done])]
+    const roster = [...new Set([...Object.keys(champions).map(Number), ...done, ...availableIds])]
       .filter((id) => Number.isInteger(id) && id > 0)
       .sort((a, b) => getChampionName(champions, a).localeCompare(getChampionName(champions, b)));
     const remaining = roster.filter((id) => !done.has(id));
@@ -97,11 +137,15 @@ export default function STracker() {
       visible: roster.filter(
         (id) =>
           (completionFilter === "all" ||
-            (completionFilter === "earned" ? done.has(id) : !done.has(id))) &&
+            (completionFilter === "available"
+              ? availableIds.has(id)
+              : completionFilter === "earned"
+                ? done.has(id)
+                : !done.has(id))) &&
           matchesSearch(getChampionName(champions, id), search),
       ),
     };
-  }, [champions, completedIds, search, completionFilter]);
+  }, [champions, completedIds, search, completionFilter, availableIds]);
 
   let message: string | null = null;
   if (error) message = "Could not read challenge progress. Reopen this page to try again.";
@@ -164,6 +208,15 @@ export default function STracker() {
             {new Date(data!.fetchedAt).toLocaleString(LOCALE)}.
             {status === "disconnected" && " Client disconnected; showing saved progress."}
           </p>
+          {completionFilter === "available" && (
+            <p className="text-xs text-lol-text" role="status">
+              {availability.state === "inactive"
+                ? "Join an ARAM Mayhem champion-select lobby to see available champions."
+                : availability.state === "unavailable"
+                  ? "The client has not supplied a supported champion-select reading. Retrying automatically."
+                  : "Live: your current champion and the shared bench. Teammate champions require a trade and are excluded. Bench availability can change before you select."}
+            </p>
+          )}
           {visible.length ? (
             <ul
               className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-2"
@@ -183,6 +236,10 @@ export default function STracker() {
                       className={`text-xs ${completed.has(id) ? "text-lol-gold" : "text-lol-text"}`}
                     >
                       {completed.has(id) ? "S- earned" : "S- needed"}
+                      {completionFilter === "available" &&
+                        (id === availability.currentChampionId
+                          ? " · Current champion"
+                          : " · On bench")}
                     </div>
                   </div>
                 </li>
@@ -192,11 +249,13 @@ export default function STracker() {
             <p className="text-sm text-lol-text py-8 text-center" role="status">
               {search.trim()
                 ? "No champions match your search in this view. Try All to search every champion."
-                : completionFilter === "needed"
-                  ? "Every champion completed. Select All or Earned to see them."
-                  : completionFilter === "earned"
-                    ? "No champions earned yet. Select Needed to see champions to work on."
-                    : "No champions available."}
+                : completionFilter === "available"
+                  ? "No available champions in the current reading."
+                  : completionFilter === "needed"
+                    ? "Every champion completed. Select All or Earned to see them."
+                    : completionFilter === "earned"
+                      ? "No champions earned yet. Select Needed to see champions to work on."
+                      : "No champions available."}
             </p>
           )}
         </>

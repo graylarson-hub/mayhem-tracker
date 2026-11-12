@@ -42,6 +42,7 @@ const api: ElectronAPI = {
   ...requests,
   onBackfillDone: subscribe("lcu:backfill-done"),
   onBackfillProgress: subscribe("lcu:backfill-progress"),
+  onChampionAvailability: subscribe("champ-select:changed"),
   onLiveGame: subscribe("live:changed"),
   onChallengesChanged: subscribe("challenges:changed"),
   onStatusChanged: subscribe("lcu:status-changed"),

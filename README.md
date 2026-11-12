@@ -42,7 +42,7 @@ npm install
 npm run dev       # start in dev mode
 ```
 
-better-sqlite3 ships prebuilt Node-API binaries, so there is no native module to rebuild for Electron. The Electron binary itself downloads the first time `npm run dev` needs it.
+better-sqlite3 ships prebuilt Node-API binaries, so there is no native module to rebuild for Electron. The Electron runtime is installed by the Electron dependency setup. If `npm run dev` reports `Error: Electron uninstall`, run `node node_modules/electron/install.js` to install the missing runtime, then run `npm run dev` again.
 
 These run on pull requests, again before a tagged release, and locally via
 `preversion`, so `npm version` will not tag a tree that fails them:

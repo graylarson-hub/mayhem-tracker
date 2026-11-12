@@ -1,3 +1,4 @@
+import { AvailabilityTracker } from "./champion-availability";
 import {
   authenticate,
   ClientElevatedPermsError,
@@ -16,6 +17,17 @@ import { MAYHEM_QUEUE_IDS } from "../shared/queues";
 import { SEASONS, seasonBounds } from "../shared/seasons";
 import type { BackfillLimit, BackfillResult, LcuStatus } from "../shared/api";
 
+let availabilityTimer: ReturnType<typeof setInterval> | null = null;
+let availability: AvailabilityTracker | null = null;
+export function getChampionAvailability() {
+  return (
+    availability?.snapshot ?? {
+      state: "inactive" as const,
+      currentChampionId: null,
+      benchChampionIds: [],
+    }
+  );
+}
 let credentials: Credentials | null = null;
 let status: LcuStatus = "disconnected";
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -35,6 +47,7 @@ export function onLcuStatusChange(listener: StatusListener) {
 function setStatus(newStatus: typeof status, win?: BrowserWindow | null) {
   const changed = status !== newStatus;
   status = newStatus;
+  if (newStatus === "disconnected" || newStatus === "connecting") availability?.clear();
   sendToRenderer(win, "lcu:status-changed", status);
   if (!changed) return;
   for (const listener of statusListeners) {
@@ -939,6 +952,18 @@ function handleFrame(win: BrowserWindow, payload: any): void {
   const raw = String(payload?.uri ?? "");
   const path = raw.startsWith("/") ? raw.slice(1) : raw;
 
+  if (
+    path === "lol-champ-select/v1/session" ||
+    path === GAMEFLOW_PHASE_PATH ||
+    path === GAMEFLOW_SESSION_PATH
+  ) {
+    if (
+      (path === "lol-champ-select/v1/session" && payload.eventType === "Delete") ||
+      (path === GAMEFLOW_PHASE_PATH && payload.data !== "ChampSelect")
+    )
+      availability?.clear();
+    else availability?.refresh();
+  }
   if (path === RIOT_GRADE_SOURCE.slice(1) || path === EOG_STATS_PATHS[0]) {
     if (payload.eventType === "Delete" || !payload.data) grades(win).stop();
     else grades(win).trigger();
@@ -1045,6 +1070,7 @@ async function attachEogListener(win: BrowserWindow): Promise<void> {
       // A socket the app replaced, or closed on the way out, isn't news
       if (eogSocket !== socket) return;
       eogSocket = null;
+      availability?.clear();
 
       // Nothing is left to report the match ending, so holding "in game" would
       // strand the indicator there until the next reconnect
@@ -1226,6 +1252,15 @@ async function pollTick(win: BrowserWindow) {
 
 export function startPolling(win: BrowserWindow, firstAttempt = true) {
   pollingStopped = false;
+  availability ??= new AvailabilityTracker(
+    lcuJson,
+    (value) => sendToRenderer(win, "champ-select:changed", value),
+    (summary) => console.log("Champion availability rejected:", summary),
+  );
+  if (!availabilityTimer)
+    availabilityTimer = setInterval(() => {
+      if (isClientConnected()) availability?.refresh();
+    }, 2000);
 
   // Show "connecting" only on the very first attempt after app launch
   setStatus(firstAttempt ? "connecting" : "disconnected", win);
@@ -1253,6 +1288,7 @@ export function startPolling(win: BrowserWindow, firstAttempt = true) {
     }
 
     setStatus("connected", win);
+    availability?.refresh();
     if (connectTimer) {
       clearInterval(connectTimer);
       connectTimer = null;
@@ -1275,6 +1311,10 @@ export function startPolling(win: BrowserWindow, firstAttempt = true) {
 
 export function stopPolling() {
   pollingStopped = true;
+  if (availabilityTimer) clearInterval(availabilityTimer);
+  availabilityTimer = null;
+  availability?.clear();
+  availability = null;
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;

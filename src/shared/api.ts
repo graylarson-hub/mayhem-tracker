@@ -1,3 +1,9 @@
+export interface ChampionAvailability {
+  state: "inactive" | "unavailable" | "active";
+  currentChampionId: number | null;
+  benchChampionIds: number[];
+}
+
 // The IPC contract: every shape that crosses the preload bridge, the
 // ElectronAPI interface the bridge implements, and the channels both ends of it
 // are built from. It lives in shared/ so src/preload and src/main can import it
@@ -1057,6 +1063,8 @@ export interface ElectronAPI {
   getGlobalStats: (patch?: string, queue?: number) => Promise<GlobalStats>;
   getTrends: (queue?: number) => Promise<TrendsData>;
   getRecords: (queue?: number, account?: string) => Promise<RecordsData>;
+  getChampionAvailability: () => Promise<ChampionAvailability>;
+  onChampionAvailability: (callback: (snapshot: ChampionAvailability) => void) => () => void;
   getLiveGame: () => Promise<LiveGameSnapshot>;
   onLiveGame: (callback: (snapshot: LiveGameSnapshot) => void) => () => void;
   getGameRecap: (gameId?: number) => Promise<GameRecap | null>;
@@ -1171,6 +1179,7 @@ export const INVOKE_CHANNELS = {
   getGlobalStats: "db:global-stats",
   getTrends: "db:trends",
   getRecords: "db:records",
+  getChampionAvailability: "champ-select:availability",
   getLiveGame: "live:snapshot",
   getGameRecap: "db:game-recap",
   getGameCard: "db:game-card",
@@ -1220,6 +1229,7 @@ export interface RendererEvents {
   "lcu:games-updated": void;
   "lcu:backfill-progress": BackfillProgress;
   "lcu:backfill-done": BackfillResult | { error: string };
+  "champ-select:changed": ChampionAvailability;
   "live:changed": LiveGameSnapshot;
   "challenges:changed": ChallengesResult;
   "update:progress": number;

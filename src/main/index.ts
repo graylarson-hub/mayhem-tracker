@@ -1,5 +1,7 @@
 import { app, BrowserWindow, Tray, Menu, nativeImage } from "electron";
 import path from "path";
+import { getDataDir, getBackupDir } from "./paths";
+import { reconcileDatabase } from "./reconcile-database";
 import { closeDatabase, getSetting, checkScoreBackfill } from "./db";
 import { initDatabaseWithRecovery, startBackupSchedule, stopBackupSchedule } from "./backup";
 import { registerIpcHandlers } from "./ipc-handlers";
@@ -22,6 +24,13 @@ let didFinalFetch = false;
 // How long quitting will wait on the last sync before giving up and exiting
 const FINAL_FETCH_TIMEOUT_MS = 5_000;
 
+// Pin the profile name before Electron acquires its profile-specific lock.
+// An explicit Chromium profile remains available for isolated smoke tests.
+app.setPath(
+  "userData",
+  app.commandLine.getSwitchValue("user-data-dir") ||
+    path.join(app.getPath("appData"), "mayhem-tracker"),
+);
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
@@ -162,6 +171,23 @@ app.whenReady().then(async () => {
   // Initialize the database first. Through the backup module rather than
   // directly: a database that has been deleted or damaged since the last launch
   // is restored from the newest good snapshot here, before anything reads it.
+  const databasePath = path.join(getDataDir(), "matches.db");
+  console.log("Database path:", databasePath, "packaged:", app.isPackaged);
+  if (!app.isPackaged) {
+    // Run outside corruption recovery: a merge failure must never quarantine
+    // an otherwise healthy destination or silently start a fresh database.
+    try {
+      await reconcileDatabase(
+        path.join(app.getAppPath(), "data", "matches.db"),
+        databasePath,
+        getBackupDir(),
+      );
+    } catch (error) {
+      console.error("Database reconciliation failed; startup stopped:", error);
+      app.exit(1);
+      return;
+    }
+  }
   initDatabaseWithRecovery();
 
   // Needs the database, which holds the answer. Keeps the login item pointing at
