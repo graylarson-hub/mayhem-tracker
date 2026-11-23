@@ -3,13 +3,25 @@ import { useBackfill } from "../hooks/useBackfill";
 import { queueLabel } from "../components/QueueSelect";
 import { LOCALE, formatDecimal } from "../lib/format";
 import { setRemembering } from "../lib/viewState";
-import type { BackupInfo, ImportProgress } from "../lib/types";
+import {
+  NAV_LINKS,
+  HOME_PATH,
+  hiddenNavLinks,
+  navLayout,
+  toggleNavLink,
+  type NavLayout,
+} from "../lib/navigation";
+import { useSettingStore } from "../hooks/useSettingStore";
+import type { AccountRemovalPlan, BackupInfo, ImportProgress, StoredAccount } from "../lib/types";
 import {
   DEFAULT_SESSION_GROUPING,
   SESSION_GROUPING_SETTING,
   parseSessionGrouping,
   type SessionGrouping,
 } from "../../shared/session";
+
+const REPO_URL = "https://github.com/Yhprum/mayhem-tracker";
+const DISCORD_URL = "https://discord.gg/ezZbpVefFH";
 
 const SESSION_GROUPING_OPTIONS: { value: SessionGrouping; label: string }[] = [
   { value: "day", label: "Day" },
@@ -23,6 +35,7 @@ const BACKUP_REASONS: Record<string, string> = {
   manual: "Manual",
   "pre-import": "Before import",
   "pre-repair": "Before repair",
+  "pre-remove": "Before account removal",
   "pre-restore": "Before restore",
 };
 
@@ -78,10 +91,14 @@ function Switch({
 export default function Settings() {
   // Shared so a backfill started automatically on first connect shows here too
   const { running: backfilling, progress } = useBackfill();
+  const hiddenLinks = useSettingStore(hiddenNavLinks);
+  const layout = useSettingStore(navLayout);
   const [autoStart, setAutoStart] = useState(false);
-  // Only the packaged program has a path worth registering, so the switch says
-  // so instead of pretending in a dev build
-  const [autoStartSupported, setAutoStartSupported] = useState(false);
+  // Only the packaged program has a durable exe to register at sign-in or to
+  // swap for a new version, so those switches say so instead of pretending in a
+  // dev build
+  const [packaged, setPackaged] = useState(false);
+  const [showReleaseNotes, setShowReleaseNotes] = useState(true);
   const [minimizeToTray, setMinimizeToTray] = useState(true);
   // Every queue with games stored, and the subset the user has switched off
   const [queues, setQueues] = useState<number[]>([]);
@@ -90,6 +107,7 @@ export default function Settings() {
   const [sessionGrouping, setSessionGrouping] = useState<SessionGrouping>(DEFAULT_SESSION_GROUPING);
   const [autoBackup, setAutoBackup] = useState(true);
   const [rememberFilters, setRememberFilters] = useState(false);
+  const [version, setVersion] = useState("");
   const [loading, setLoading] = useState(true);
   const [exportStatus, setExportStatus] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
@@ -102,6 +120,14 @@ export default function Settings() {
   const [backupBusy, setBackupBusy] = useState(false);
   // Restoring replaces the whole database, so the row asks a second time
   const [confirmRestore, setConfirmRestore] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<StoredAccount[]>([]);
+  const [removeTarget, setRemoveTarget] = useState("");
+  // Tagged with the account it was computed for, so a preview never shows
+  // against a different pick while the next one is on its way
+  const [preview, setPreview] = useState<(AccountRemovalPlan & { puuid: string }) | null>(null);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeStatus, setRemoveStatus] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -113,17 +139,23 @@ export default function Settings() {
       window.api.getSetting("auto_backup"),
       window.api.getSetting("remember_filters"),
       window.api.getSetting(SESSION_GROUPING_SETTING),
-    ]).then(([startup, startupSupported, tray, hidden, remakes, backup, remember, grouping]) => {
-      setAutoStart(startup === "true");
-      setAutoStartSupported(startupSupported);
-      setMinimizeToTray(tray !== "false");
-      setHiddenQueues(new Set(hidden ? hidden.split(",").map(Number) : []));
-      setHideRemakes(remakes === "true");
-      setAutoBackup(backup !== "false");
-      setRememberFilters(remember === "true");
-      setSessionGrouping(parseSessionGrouping(grouping));
-      setLoading(false);
-    });
+      window.api.getVersion(),
+      window.api.getSetting("show_release_notes"),
+    ]).then(
+      ([startup, isPackaged, tray, hidden, remakes, backup, remember, grouping, v, notes]) => {
+        setAutoStart(startup === "true");
+        setPackaged(isPackaged);
+        setShowReleaseNotes(notes !== "false");
+        setMinimizeToTray(tray !== "false");
+        setHiddenQueues(new Set(hidden ? hidden.split(",").map(Number) : []));
+        setHideRemakes(remakes === "true");
+        setAutoBackup(backup !== "false");
+        setRememberFilters(remember === "true");
+        setSessionGrouping(parseSessionGrouping(grouping));
+        setVersion(v);
+        setLoading(false);
+      },
+    );
   }, []);
 
   // Kept current the same way the queue dropdown is: a game from a queue that
@@ -139,6 +171,31 @@ export default function Settings() {
   }, []);
 
   useEffect(refreshBackups, [refreshBackups]);
+
+  // Kept current like the queue list, so an account that syncs while the page
+  // is open can be picked without a reload
+  useEffect(() => {
+    const fetchAccounts = () => window.api.getStoredAccounts().then(setAccounts);
+    fetchAccounts();
+    return window.api.onGamesUpdated(fetchAccounts);
+  }, []);
+
+  // Recomputed whenever the library changes, not only when the pick does: a
+  // game synced in the meantime changes what the removal would do
+  // A pick whose account has since gone counts as no pick at all
+  const removePick = accounts.find((a) => a.puuid === removeTarget) ?? null;
+  const removalPlan = removePick && preview?.puuid === removePick.puuid ? preview : null;
+
+  useEffect(() => {
+    if (!removeTarget || !accounts.some((a) => a.puuid === removeTarget)) return;
+    let cancelled = false;
+    window.api.previewAccountRemoval(removeTarget).then((plan) => {
+      if (!cancelled) setPreview({ ...plan, puuid: removeTarget });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [removeTarget, accounts]);
 
   // Every switch on this page flips one boolean setting and writes it back, so
   // they share one handler. `also` is for the two that have somewhere else to
@@ -293,6 +350,36 @@ export default function Settings() {
     }
   }, []);
 
+  const handleRemoveAccount = useCallback(async () => {
+    const account = removePick;
+    if (!account) return;
+    setConfirmRemove(false);
+    setRemoving(true);
+    setRemoveStatus(null);
+    try {
+      const outcome = await window.api.removeAccount(account.puuid);
+      if (outcome.success && outcome.result) {
+        const { deleted, reassigned } = outcome.result;
+        setRemoveStatus(
+          `Removed ${account.name ?? "the account"}: deleted ${deleted.toLocaleString(LOCALE)} game(s)` +
+            (reassigned > 0
+              ? `, moved ${reassigned.toLocaleString(LOCALE)} shared game(s) to your other accounts`
+              : "") +
+            ". A backup was taken first.",
+        );
+        setRemoveTarget("");
+      } else {
+        setRemoveStatus(`Error: ${outcome.error ?? "removal failed"}`);
+      }
+      // The removal takes a snapshot on its way in
+      refreshBackups();
+    } catch (err: any) {
+      setRemoveStatus(`Error: ${err.message}`);
+    } finally {
+      setRemoving(false);
+    }
+  }, [removePick, refreshBackups]);
+
   const handleRepair = useCallback(async () => {
     setRepairStatus(null);
     try {
@@ -310,331 +397,504 @@ export default function Settings() {
   if (loading) return null;
 
   return (
-    <div className="max-w-2xl space-y-6">
+    <div className="max-w-2xl 2xl:max-w-[86rem] space-y-6">
       <h1 className="text-xl font-bold text-lol-text-bright">Settings</h1>
 
-      {/* General */}
-      <div className="bg-lol-card rounded-xl border border-lol-border/60 p-5">
-        <h2 className="text-sm font-semibold text-lol-text-bright mb-4">General</h2>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Start with Windows</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Open the program in the system tray when you sign in to Windows, so your games are
-                recorded without having to remember to start it.
-                {!autoStartSupported && " Only available in the packaged program."}
-              </p>
-            </div>
-            <Switch
-              checked={autoStart}
-              onChange={toggle("auto_start", autoStart, setAutoStart)}
-              disabled={!autoStartSupported}
-            />
-          </div>
+      {/* Two stacks on a wide window, preferences on the left and data on the
+          right. Narrower, the stacks dissolve into one column, where order-*
+          puts the cards back in reading order. */}
+      <div className="flex flex-col gap-6 2xl:grid 2xl:grid-cols-2 2xl:items-start">
+        <div className="contents 2xl:flex 2xl:flex-col 2xl:gap-6">
+          {/* General */}
+          <div className="order-1 bg-lol-card rounded-xl border border-lol-border/60 p-5">
+            <h2 className="text-sm font-semibold text-lol-text-bright mb-4">General</h2>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Start with Windows</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Open the program in the system tray when you sign in to Windows, so your games
+                    are recorded without having to remember to start it.
+                    {!packaged && " Only available in the packaged program."}
+                  </p>
+                </div>
+                <Switch
+                  checked={autoStart}
+                  onChange={toggle("auto_start", autoStart, setAutoStart)}
+                  disabled={!packaged}
+                />
+              </div>
 
-          <div className="border-t border-lol-border" />
+              <div className="border-t border-lol-border" />
 
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Minimize to tray on close</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                When enabled, the program can keep storing your games even when the window is
-                closed. You can still close the program from the system tray.
-              </p>
-            </div>
-            <Switch
-              checked={minimizeToTray}
-              onChange={toggle("minimize_to_tray", minimizeToTray, setMinimizeToTray)}
-            />
-          </div>
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Minimize to tray on close</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    When enabled, the program can keep storing your games even when the window is
+                    closed. You can still close the program from the system tray.
+                  </p>
+                </div>
+                <Switch
+                  checked={minimizeToTray}
+                  onChange={toggle("minimize_to_tray", minimizeToTray, setMinimizeToTray)}
+                />
+              </div>
 
-          <div className="border-t border-lol-border" />
+              <div className="border-t border-lol-border" />
 
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Remember filters and sorting</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Reopen every page with the filters, search, and sort order you last used. When off,
-                each page starts on its defaults again every time the program opens.
-              </p>
-            </div>
-            <Switch
-              checked={rememberFilters}
-              onChange={toggle(
-                "remember_filters",
-                rememberFilters,
-                setRememberFilters,
-                setRemembering,
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Remember filters and sorting</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Reopen every page with the filters, search, and sort order you last used. When
+                    off, each page starts on its defaults again every time the program opens.
+                  </p>
+                </div>
+                <Switch
+                  checked={rememberFilters}
+                  onChange={toggle(
+                    "remember_filters",
+                    rememberFilters,
+                    setRememberFilters,
+                    setRemembering,
+                  )}
+                />
+              </div>
+
+              <div className="border-t border-lol-border" />
+
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Hide remakes</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Leave remade games out of the match history. They are still recorded, and were
+                    never counted toward your stats either way.
+                  </p>
+                </div>
+                <Switch
+                  checked={hideRemakes}
+                  onChange={toggle("hide_remakes", hideRemakes, setHideRemakes)}
+                />
+              </div>
+
+              <div className="border-t border-lol-border" />
+
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Group match history by</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Break the match list into sessions, each under a heading with its own record and
+                    averages. Days start at 5am.
+                  </p>
+                </div>
+                <select
+                  className="select shrink-0"
+                  value={sessionGrouping}
+                  onChange={(e) => handleSessionGroupingChange(e.target.value as SessionGrouping)}
+                >
+                  {SESSION_GROUPING_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* A single queue has nothing to choose between, so the whole block
+                  waits until a second one shows up in the database */}
+              {queues.length > 1 && (
+                <>
+                  <div className="border-t border-lol-border" />
+
+                  <div>
+                    <p className="text-sm text-lol-text-bright">Queues to include</p>
+                    <p className="text-xs text-lol-text mt-0.5">
+                      Stats and match history only count the queues switched on here. Games from the
+                      others are still recorded, and can be counted again by switching their queue
+                      back on.
+                    </p>
+                    <div className="mt-3 space-y-3">
+                      {queues.map((q, _i, all) => {
+                        const shown = !hiddenQueues.has(q);
+                        const shownCount = all.filter((id) => !hiddenQueues.has(id)).length;
+                        return (
+                          <div key={q} className="flex items-center justify-between gap-8">
+                            <p className="text-sm text-lol-text">{queueLabel(q)}</p>
+                            {/* Switching off the last one would empty every page */}
+                            <Switch
+                              checked={shown}
+                              disabled={shown && shownCount === 1}
+                              onChange={() => handleQueueToggle(q)}
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
               )}
-            />
-          </div>
-
-          <div className="border-t border-lol-border" />
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Hide remakes</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Leave remade games out of the match history. They are still recorded, and were never
-                counted toward your stats either way.
-              </p>
             </div>
-            <Switch
-              checked={hideRemakes}
-              onChange={toggle("hide_remakes", hideRemakes, setHideRemakes)}
-            />
           </div>
 
-          <div className="border-t border-lol-border" />
+          {/* Customization */}
+          <div className="order-2 bg-lol-card rounded-xl border border-lol-border/60 p-5">
+            <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Customization</h2>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Navigation</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Show the page links across the top of the window, or down a sidebar on the left.
+                  </p>
+                </div>
+                <select
+                  className="select shrink-0"
+                  value={layout}
+                  onChange={(e) => navLayout.set(e.target.value as NavLayout)}
+                >
+                  <option value="header">Header</option>
+                  <option value="sidebar">Sidebar</option>
+                </select>
+              </div>
 
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <p className="text-sm text-lol-text-bright">Group match history by</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Break the match list into sessions, each under a heading with its own record and
-                averages. Days start at 5am.
-              </p>
-            </div>
-            <select
-              className="select shrink-0"
-              value={sessionGrouping}
-              onChange={(e) => handleSessionGroupingChange(e.target.value as SessionGrouping)}
-            >
-              {SESSION_GROUPING_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* A single queue has nothing to choose between, so the whole block
-              waits until a second one shows up in the database */}
-          {queues.length > 1 && (
-            <>
               <div className="border-t border-lol-border" />
 
               <div>
-                <p className="text-sm text-lol-text-bright">Queues to include</p>
-                <p className="text-xs text-lol-text mt-0.5">
-                  Stats and match history only count the queues switched on here. Games from the
-                  others are still recorded, and can be counted again by switching their queue back
-                  on.
-                </p>
+                <p className="text-sm text-lol-text-bright">Navigation links</p>
                 <div className="mt-3 space-y-3">
-                  {queues.map((q, _i, all) => {
-                    const shown = !hiddenQueues.has(q);
-                    const shownCount = all.filter((id) => !hiddenQueues.has(id)).length;
-                    return (
-                      <div key={q} className="flex items-center justify-between">
-                        <p className="text-sm text-lol-text">{queueLabel(q)}</p>
-                        {/* Switching off the last one would empty every page */}
-                        <Switch
-                          checked={shown}
-                          disabled={shown && shownCount === 1}
-                          onChange={() => handleQueueToggle(q)}
-                        />
+                  {NAV_LINKS.map(({ to, label, icon: Icon }) => (
+                    <div key={to} className="flex items-center justify-between gap-8">
+                      <div className="flex items-center gap-2 text-sm text-lol-text">
+                        <Icon className="w-4 h-4 shrink-0" />
+                        {label}
                       </div>
-                    );
-                  })}
+                      <Switch
+                        checked={!hiddenLinks.has(to)}
+                        disabled={to === HOME_PATH}
+                        onChange={() => toggleNavLink(to)}
+                      />
+                    </div>
+                  ))}
                 </div>
               </div>
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Data Management */}
-      <div className="bg-lol-card rounded-xl border border-lol-border/60 p-5">
-        <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Data Management</h2>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Backfill match history</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Pull your older Mayhem games from Riot and add any that aren't stored yet. This runs
-                automatically the first time an account connects; use this to run it again, or to
-                finish an import you cancelled.
-              </p>
             </div>
-            <button
-              onClick={handleBackfill}
-              disabled={backfilling}
-              className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {backfilling ? "Working..." : "Backfill"}
-            </button>
-          </div>
-          {backfillLine && <p className="text-xs text-lol-text">{backfillLine}</p>}
-
-          <div className="border-t border-lol-border" />
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Export data</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Save match data and captured Riot grades (including regular ARAM) to JSON
-              </p>
-            </div>
-            <button
-              onClick={handleExport}
-              className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors"
-            >
-              Export
-            </button>
-          </div>
-          {exportStatus && <p className="text-xs text-lol-text">{exportStatus}</p>}
-
-          <div className="border-t border-lol-border" />
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Import data</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Load match data from a previously exported file
-              </p>
-            </div>
-            <button
-              onClick={handleImport}
-              disabled={importing}
-              className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {importing ? "Working..." : "Import"}
-            </button>
-          </div>
-          {importLine && <p className="text-xs text-lol-text">{importLine}</p>}
-
-          <div className="border-t border-lol-border" />
-
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Repair account data</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Re-detect which accounts are yours by analyzing game history, then rebuild stored
-                stats, augments, and performance scores from the raw game data. Use this if games
-                are attributed to the wrong account or scores look stale.
-              </p>
-            </div>
-            <button
-              onClick={handleRepair}
-              className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors"
-            >
-              Repair
-            </button>
-          </div>
-          {repairStatus && <p className="text-xs text-lol-text">{repairStatus}</p>}
-        </div>
-      </div>
-
-      {/* Backups */}
-      <div className="bg-lol-card rounded-xl border border-lol-border/60 p-5">
-        <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Backups</h2>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-sm text-lol-text-bright">Automatic backups</p>
-              <p className="text-xs text-lol-text mt-0.5">
-                Keep a daily copy of your database on this computer, plus one before any import or
-                repair. Older copies thin out to weekly and monthly. If the database ever goes
-                missing or won't open, the newest working copy is restored on startup.
-              </p>
-            </div>
-            <Switch
-              checked={autoBackup}
-              onChange={toggle("auto_backup", autoBackup, setAutoBackup)}
-            />
           </div>
 
-          <div className="border-t border-lol-border" />
+          {/* Updates */}
+          <div className="order-5 bg-lol-card rounded-xl border border-lol-border/60 p-5">
+            <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Updates</h2>
+            <div className="space-y-4">
+              <p className="text-xs text-lol-text">
+                This fork shows upstream release notes. Install new fork builds manually.
+              </p>
 
-          {backups.length === 0 ? (
-            <p className="text-xs text-lol-text">No backups yet.</p>
-          ) : (
-            <div className="space-y-1">
-              {backups.map((backup) => (
-                <div
-                  key={backup.file}
-                  className="flex items-center justify-between gap-3 text-xs py-1"
-                >
-                  <div className="min-w-0">
-                    <p className="text-lol-text-bright">{formatTaken(backup.created)}</p>
-                    <p className="text-lol-text">
-                      {BACKUP_REASONS[backup.reason] ?? backup.reason} ·{" "}
-                      {backup.games === null
-                        ? "unreadable"
-                        : `${backup.games.toLocaleString(LOCALE)} games`}{" "}
-                      · {formatSize(backup.size)}
-                    </p>
-                  </div>
-                  {confirmRestore === backup.file ? (
-                    <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-lol-text">Replace current data?</span>
-                      <button
-                        onClick={() => handleRestore(backup.file)}
-                        disabled={backupBusy}
-                        className="px-3 py-1 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50"
-                      >
-                        Restore
-                      </button>
-                      <button
-                        onClick={() => setConfirmRestore(null)}
-                        className="px-3 py-1 rounded bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
-                      >
-                        Cancel
-                      </button>
-                    </div>
-                  ) : (
-                    <button
-                      onClick={() => setConfirmRestore(backup.file)}
-                      disabled={backupBusy || backup.games === null}
-                      className="px-3 py-1 rounded shrink-0 bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Restore
-                    </button>
-                  )}
+              <div className="border-t border-lol-border" />
+
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Show what's new after updating</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Open the release notes for the versions you just got the first time the program
+                    starts on a new version.
+                  </p>
                 </div>
-              ))}
+                <Switch
+                  checked={showReleaseNotes}
+                  onChange={toggle("show_release_notes", showReleaseNotes, setShowReleaseNotes)}
+                />
+              </div>
             </div>
-          )}
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleBackupNow}
-              disabled={backupBusy}
-              className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {backupBusy ? "Working..." : "Back up now"}
-            </button>
-            <button
-              onClick={() => window.api.openBackupFolder()}
-              className="px-4 py-1.5 rounded text-sm bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
-            >
-              Open folder
-            </button>
           </div>
-          {backupStatus && <p className="text-xs text-lol-text">{backupStatus}</p>}
+
+          {/* Troubleshooting */}
+          <div className="order-6 bg-lol-card rounded-xl border border-lol-border/60 p-5">
+            <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Troubleshooting</h2>
+            <div className="flex items-center justify-between gap-8">
+              <div>
+                <p className="text-sm text-lol-text-bright">Log file</p>
+                <p className="text-xs text-lol-text mt-0.5">
+                  A record of what the program does in the background, like connecting to the client
+                  and recording games. If something goes wrong, main.log is the file to attach to a
+                  bug report.
+                </p>
+              </div>
+              <button
+                onClick={() => window.api.openLogsFolder()}
+                className="px-4 py-1.5 rounded text-sm shrink-0 bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
+              >
+                Open folder
+              </button>
+            </div>
+          </div>
+
+          {/* About */}
+          <div className="order-7 bg-lol-card rounded-xl border border-lol-border/60 p-5">
+            <h2 className="text-sm font-semibold text-lol-text-bright mb-4">About</h2>
+            <div className="flex items-center justify-between gap-8">
+              <p className="text-sm text-lol-text-bright">Mayhem Tracker v{version}</p>
+              <div className="flex items-center gap-2 shrink-0">
+                {[
+                  { label: "GitHub", url: REPO_URL },
+                  { label: "Release notes", url: `${REPO_URL}/releases/tag/v${version}` },
+                  { label: "Discord", url: DISCORD_URL },
+                ].map(({ label, url }) => (
+                  <button
+                    key={label}
+                    onClick={() => window.api.openUrl(url)}
+                    className="px-4 py-1.5 rounded text-sm bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
-      </div>
 
-      {/* Troubleshooting */}
-      <div className="bg-lol-card rounded-xl border border-lol-border/60 p-5">
-        <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Troubleshooting</h2>
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-sm text-lol-text-bright">Log file</p>
-            <p className="text-xs text-lol-text mt-0.5">
-              A record of what the program does in the background, like connecting to the client and
-              recording games. If something goes wrong, main.log is the file to attach to a bug
-              report.
-            </p>
+        <div className="contents 2xl:flex 2xl:flex-col 2xl:gap-6">
+          {/* Data Management */}
+          <div className="order-3 bg-lol-card rounded-xl border border-lol-border/60 p-5">
+            <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Data Management</h2>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Backfill match history</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Pull your older Mayhem games from Riot and add any that aren't stored yet. This
+                    runs automatically the first time an account connects; use this to run it again,
+                    or to finish an import you cancelled.
+                  </p>
+                </div>
+                <button
+                  onClick={handleBackfill}
+                  disabled={backfilling}
+                  className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {backfilling ? "Working..." : "Backfill"}
+                </button>
+              </div>
+              {backfillLine && <p className="text-xs text-lol-text">{backfillLine}</p>}
+
+              <div className="border-t border-lol-border" />
+
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Export data</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Save match data and captured Riot grades (including regular ARAM) to JSON
+                  </p>
+                </div>
+                <button
+                  onClick={handleExport}
+                  className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors"
+                >
+                  Export
+                </button>
+              </div>
+              {exportStatus && <p className="text-xs text-lol-text">{exportStatus}</p>}
+
+              <div className="border-t border-lol-border" />
+
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Import data</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Load match data from a previously exported file
+                  </p>
+                </div>
+                <button
+                  onClick={handleImport}
+                  disabled={importing}
+                  className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {importing ? "Working..." : "Import"}
+                </button>
+              </div>
+              {importLine && <p className="text-xs text-lol-text">{importLine}</p>}
+
+              <div className="border-t border-lol-border" />
+
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Repair account data</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Re-detect which accounts are yours by analyzing game history, then rebuild
+                    stored stats, augments, and performance scores from the raw game data. Use this
+                    if games are attributed to the wrong account or scores look stale.
+                  </p>
+                </div>
+                <button
+                  onClick={handleRepair}
+                  className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors"
+                >
+                  Repair
+                </button>
+              </div>
+              {repairStatus && <p className="text-xs text-lol-text">{repairStatus}</p>}
+
+              {accounts.length > 0 && (
+                <>
+                  <div className="border-t border-lol-border" />
+
+                  <div>
+                    <p className="text-sm text-lol-text-bright">Remove an account</p>
+                    <p className="text-xs text-lol-text mt-0.5">
+                      Stop tracking an account, like a friend who played on this computer, and
+                      delete its games. Games it played together with one of your other accounts are
+                      kept and moved to that account. Captured Riot grades are retained. A backup is
+                      taken first, so this can be undone by restoring it.
+                    </p>
+                    <div className="mt-3 flex items-center gap-2">
+                      <select
+                        className="select min-w-0 flex-1"
+                        value={removePick ? removeTarget : ""}
+                        disabled={removing}
+                        onChange={(e) => {
+                          setRemoveTarget(e.target.value);
+                          setConfirmRemove(false);
+                          setRemoveStatus(null);
+                        }}
+                      >
+                        <option value="">Choose an account...</option>
+                        {accounts.map((a) => (
+                          <option key={a.puuid} value={a.puuid}>
+                            {a.name ?? "Unknown account"} ({a.games.toLocaleString(LOCALE)} games)
+                          </option>
+                        ))}
+                      </select>
+                      {confirmRemove ? (
+                        <>
+                          <button
+                            onClick={handleRemoveAccount}
+                            disabled={removing}
+                            className="px-4 py-1.5 rounded text-sm shrink-0 bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+                          >
+                            Delete
+                          </button>
+                          <button
+                            onClick={() => setConfirmRemove(false)}
+                            className="px-4 py-1.5 rounded text-sm shrink-0 bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmRemove(true)}
+                          disabled={!removalPlan || removing}
+                          className="px-4 py-1.5 rounded text-sm shrink-0 bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {removing ? "Working..." : "Remove"}
+                        </button>
+                      )}
+                    </div>
+                    {removalPlan && !removing && (
+                      <p className="text-xs text-lol-text mt-2">
+                        {confirmRemove ? "Are you sure? This " : "This "}
+                        deletes {removalPlan.deleted.toLocaleString(LOCALE)} game(s)
+                        {removalPlan.reassigned > 0 &&
+                          ` and moves ${removalPlan.reassigned.toLocaleString(LOCALE)} shared with your other accounts to them`}
+                        . Games your other accounts recorded with this player in them are not
+                        touched.
+                      </p>
+                    )}
+                  </div>
+                  {removeStatus && <p className="text-xs text-lol-text">{removeStatus}</p>}
+                </>
+              )}
+            </div>
           </div>
-          <button
-            onClick={() => window.api.openLogsFolder()}
-            className="px-4 py-1.5 rounded text-sm shrink-0 bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
-          >
-            Open folder
-          </button>
+
+          {/* Backups */}
+          <div className="order-4 bg-lol-card rounded-xl border border-lol-border/60 p-5">
+            <h2 className="text-sm font-semibold text-lol-text-bright mb-4">Backups</h2>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between gap-8">
+                <div>
+                  <p className="text-sm text-lol-text-bright">Automatic backups</p>
+                  <p className="text-xs text-lol-text mt-0.5">
+                    Keep a daily copy of your database on this computer, plus one before any import
+                    or repair. Older copies thin out to weekly and monthly. If the database ever
+                    goes missing or won't open, the newest working copy is restored on startup.
+                  </p>
+                </div>
+                <Switch
+                  checked={autoBackup}
+                  onChange={toggle("auto_backup", autoBackup, setAutoBackup)}
+                />
+              </div>
+
+              <div className="border-t border-lol-border" />
+
+              {backups.length === 0 ? (
+                <p className="text-xs text-lol-text">No backups yet.</p>
+              ) : (
+                <div className="space-y-1">
+                  {backups.map((backup) => (
+                    <div
+                      key={backup.file}
+                      className="flex items-center justify-between gap-3 text-xs py-1"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-lol-text-bright">{formatTaken(backup.created)}</p>
+                        <p className="text-lol-text">
+                          {BACKUP_REASONS[backup.reason] ?? backup.reason} ·{" "}
+                          {backup.games === null
+                            ? "unreadable"
+                            : `${backup.games.toLocaleString(LOCALE)} games`}{" "}
+                          · {formatSize(backup.size)}
+                        </p>
+                      </div>
+                      {confirmRestore === backup.file ? (
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-lol-text">Replace current data?</span>
+                          <button
+                            onClick={() => handleRestore(backup.file)}
+                            disabled={backupBusy}
+                            className="px-3 py-1 rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 transition-colors disabled:opacity-50"
+                          >
+                            Restore
+                          </button>
+                          <button
+                            onClick={() => setConfirmRestore(null)}
+                            className="px-3 py-1 rounded bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => setConfirmRestore(backup.file)}
+                          disabled={backupBusy || backup.games === null}
+                          className="px-3 py-1 rounded shrink-0 bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          Restore
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleBackupNow}
+                  disabled={backupBusy}
+                  className="px-4 py-1.5 rounded text-sm bg-lol-gold/20 text-lol-gold hover:bg-lol-gold/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {backupBusy ? "Working..." : "Back up now"}
+                </button>
+                <button
+                  onClick={() => window.api.openBackupFolder()}
+                  className="px-4 py-1.5 rounded text-sm bg-lol-border/40 text-lol-text hover:bg-lol-border/60 transition-colors"
+                >
+                  Open folder
+                </button>
+              </div>
+              {backupStatus && <p className="text-xs text-lol-text">{backupStatus}</p>}
+            </div>
+          </div>
         </div>
       </div>
     </div>

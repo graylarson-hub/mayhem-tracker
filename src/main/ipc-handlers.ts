@@ -21,11 +21,15 @@ import { SESSION_GROUPING_SETTING } from "../shared/session";
 // Settings page are exposed.
 const RENDERER_SETTINGS = new Set([
   "auto_start",
+  "auto_update",
+  "show_release_notes",
   "minimize_to_tray",
   "hidden_queues",
   "hide_remakes",
   "auto_backup",
   "remember_filters",
+  "hidden_nav_links",
+  "nav_layout",
   SESSION_GROUPING_SETTING,
 ]);
 
@@ -73,17 +77,9 @@ export function registerIpcHandlers() {
     db.getChampionMatchHistory(championId, limit, offset, patch, queue, season),
   );
 
-  handle("refreshGames", async (event) => {
+  handle("backfillHistory", async (event) => {
     // Return errors as data instead of throwing, so the renderer gets a clean
     // message rather than Electron's "Error invoking remote method" wrapper
-    try {
-      return await lcu.syncRecentGames(senderWindow(event));
-    } catch (err) {
-      return { error: lcu.friendlyErrorMessage(err) };
-    }
-  });
-
-  handle("backfillHistory", async (event) => {
     try {
       // Asked for by hand, so it checks everything Riot still has rather than
       // stopping at the newest page it recognises. Someone reaching for this
@@ -261,6 +257,10 @@ export function registerIpcHandlers() {
     return updater.downloadAndInstall(win, assetUrl);
   });
 
+  handle("getLaunchInstall", () => updater.getLaunchInstall());
+
+  handle("getUpdateNotes", () => updater.getUpdateNotes());
+
   handle("openUrl", (_event, url) => {
     openExternalUrl(url);
   });
@@ -338,6 +338,42 @@ export function registerIpcHandlers() {
     // there is no undo for it short of the snapshot taken here.
     await backup.backupQuietly("pre-repair");
     return db.repairPuuids();
+  });
+
+  handle("getStoredAccounts", () => db.getStoredAccounts());
+
+  handle("previewAccountRemoval", (_event, puuid) => db.previewAccountRemoval(puuid));
+
+  handle("removeAccount", async (event, puuid) => {
+    // The sync would put every one of its games straight back, and a backfill
+    // in flight could land some halfway through the delete
+    if (lcu.isBackfillRunning()) {
+      return { success: false, error: "Wait for the backfill to finish first." };
+    }
+    if ((await lcu.getSignedInPuuid()) === puuid) {
+      return {
+        success: false,
+        error:
+          "That account is signed in to the League client. Sign out of it first, or it will be synced right back.",
+      };
+    }
+    // Moved games are rescored, which needs champion classes
+    await dragon.waitForChampionData();
+    // Unlike the snapshot before a repair, this one isn't optional: deleting
+    // games is the one action here that nothing else can undo, so it doesn't
+    // go ahead without a verified copy, whatever the auto-backup switch says.
+    try {
+      await backup.createBackup("pre-remove");
+    } catch (err: any) {
+      return { success: false, error: `Backup failed, nothing was removed: ${err.message}` };
+    }
+    try {
+      const result = db.removeAccount(puuid);
+      sendToRenderer(senderWindow(event), "lcu:games-updated");
+      return { success: true, result };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 
   // Backups

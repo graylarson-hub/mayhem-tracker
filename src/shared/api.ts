@@ -589,6 +589,16 @@ export interface ReleaseNote {
   url: string;
 }
 
+// The first launch after an update, and the releases it brought in
+export interface UpdateNotes {
+  from: string;
+  to: string;
+  // The release page for `to`, for when the notes couldn't be fetched
+  url: string;
+  // Newest first. Empty when GitHub couldn't be reached.
+  releases: ReleaseNote[];
+}
+
 export interface UpdateInfo {
   hasUpdate: boolean;
   latest?: string;
@@ -604,6 +614,23 @@ export interface UpdateInfo {
   // there are skipped releases the dialog cannot show.
   moreVersions?: boolean;
   error?: string;
+}
+
+// An account as the Settings page offers it for removal: anything the client
+// reported, repair discovered, or a stored game is filed under
+export interface StoredAccount {
+  puuid: string;
+  name: string | null;
+  profileIcon: number | null;
+  // Games filed under this account
+  games: number;
+}
+
+// What removing an account does to the games filed under it: the ones no other
+// stored account played in are deleted, the rest move to that account
+export interface AccountRemovalPlan {
+  deleted: number;
+  reassigned: number;
 }
 
 export interface BackupInfo {
@@ -1087,7 +1114,6 @@ export interface ElectronAPI {
   onChallengesChanged: (callback: (result: ChallengesResult) => void) => () => void;
   getAllSummonerPuuids: () => Promise<string[]>;
   getProfile: () => Promise<{ name: string | null; profileIcon: number | null }>;
-  refreshGames: () => Promise<{ newGames: number; totalGames: number } | { error: string }>;
   backfillHistory: () => Promise<BackfillResult | { error: string }>;
   cancelBackfill: () => Promise<void>;
   isBackfillRunning: () => Promise<boolean>;
@@ -1121,6 +1147,11 @@ export interface ElectronAPI {
   }>;
   importData: () => Promise<{ success: boolean; imported?: number; error?: string }>;
   onImportProgress: (callback: (progress: ImportProgress) => void) => () => void;
+  getStoredAccounts: () => Promise<StoredAccount[]>;
+  previewAccountRemoval: (puuid: string) => Promise<AccountRemovalPlan>;
+  removeAccount: (
+    puuid: string,
+  ) => Promise<{ success: boolean; result?: AccountRemovalPlan; error?: string }>;
   repairPuuids: () => Promise<{
     repairedGames: number;
     discoveredAccounts: number;
@@ -1136,6 +1167,13 @@ export interface ElectronAPI {
   checkForUpdate: () => Promise<UpdateInfo>;
   downloadUpdate: (assetUrl: string) => Promise<{ success: boolean; error?: string }>;
   onUpdateProgress: (callback: (percent: number) => void) => () => void;
+  // The release the launch check is installing, or null when it is not
+  getLaunchInstall: () => Promise<UpdateInfo | null>;
+  onUpdateInstalling: (callback: (update: UpdateInfo) => void) => () => void;
+  onUpdateInstallFailed: (callback: (error: string) => void) => () => void;
+  // What changed since the version that ran before this launch, when this is
+  // the first launch on a newer one and the user wants to see it
+  getUpdateNotes: () => Promise<UpdateNotes | null>;
   openUrl: (url: string) => Promise<void>;
   minimizeWindow: () => Promise<void>;
   toggleMaximizeWindow: () => Promise<void>;
@@ -1189,7 +1227,6 @@ export const INVOKE_CHANNELS = {
   getChallenges: "challenges:get",
   getAllSummonerPuuids: "db:all-summoner-puuids",
   getProfile: "db:profile",
-  refreshGames: "lcu:refresh",
   backfillHistory: "lcu:backfill",
   cancelBackfill: "lcu:cancel-backfill",
   isBackfillRunning: "lcu:backfill-running",
@@ -1206,6 +1243,9 @@ export const INVOKE_CHANNELS = {
   copyCardImage: "export:copy-card-image",
   exportData: "data:export",
   importData: "data:import",
+  getStoredAccounts: "data:stored-accounts",
+  previewAccountRemoval: "data:preview-account-removal",
+  removeAccount: "data:remove-account",
   repairPuuids: "data:repair-puuids",
   listBackups: "backup:list",
   createBackup: "backup:create",
@@ -1216,6 +1256,8 @@ export const INVOKE_CHANNELS = {
   getVersion: "app:version",
   checkForUpdate: "app:check-update",
   downloadUpdate: "app:download-update",
+  getLaunchInstall: "app:launch-install",
+  getUpdateNotes: "app:update-notes",
   openUrl: "app:open-url",
   minimizeWindow: "window:minimize",
   toggleMaximizeWindow: "window:toggle-maximize",
@@ -1233,6 +1275,8 @@ export interface RendererEvents {
   "live:changed": LiveGameSnapshot;
   "challenges:changed": ChallengesResult;
   "update:progress": number;
+  "update:installing": UpdateInfo;
+  "update:install-failed": string;
   "window:maximized-changed": boolean;
   "data:import-progress": ImportProgress;
 }
