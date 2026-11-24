@@ -12,9 +12,11 @@ import { startPolling, stopPolling, isClientConnected, fetchNewGames } from "./l
 import { startLiveTracking, stopLiveTracking } from "./live";
 import { startChallengeTracking } from "./challenges";
 import { loadChampionData, loadAugmentData, waitForChampionData } from "./dragon";
+import { registerAssetScheme, startGameAssets } from "./game-assets";
 import { applySecurityPolicy } from "./security";
 import { APP_USER_MODEL_ID, ensureStartMenuShortcut } from "./shortcut";
 import { syncAutoStart, HIDDEN_FLAG } from "./autostart";
+import { installUpdateOnLaunch, recordLaunchVersion } from "./updater";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -31,6 +33,8 @@ app.setPath(
   app.commandLine.getSwitchValue("user-data-dir") ||
     path.join(app.getPath("appData"), "mayhem-tracker"),
 );
+registerAssetScheme();
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
@@ -67,7 +71,7 @@ function createWindow(): BrowserWindow {
     icon: iconPath,
     show: !launchedHidden,
     frame: false,
-    backgroundColor: "#0b0e14",
+    backgroundColor: "#151923",
     webPreferences: {
       preload: path.join(__dirname, "../preload/index.js"),
       additionalArguments: localeArguments(),
@@ -190,9 +194,15 @@ app.whenReady().then(async () => {
   }
   initDatabaseWithRecovery();
 
+  // Before the window can ask whether this launch is the first on a new version
+  recordLaunchVersion();
+
   // Needs the database, which holds the answer. Keeps the login item pointing at
   // the portable exe wherever it has been moved to since the last launch.
   syncAutoStart();
+
+  // Serves the renderer's art, so it has to be up before the window
+  startGameAssets();
 
   // Load assets in background
   loadChampionData();
@@ -219,6 +229,9 @@ app.whenReady().then(async () => {
   // client keeps no history of its own, so a day nobody writes down is gone.
   startChallengeTracking(win);
   startBackupSchedule();
+  // Last, once everything that has to run on a launch is under way. Only ever
+  // at startup, so an update never restarts the app partway through a session.
+  installUpdateOnLaunch(win).catch((err) => console.error("Launch update failed:", err));
 });
 
 app.on("before-quit", async (event) => {

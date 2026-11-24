@@ -174,6 +174,46 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   );
   console.log("PASS JSON export/import and SQLite backup/restore, including grade-only record");
 
+  // A shared game can move to another account playing the same champion.
+  db = m.getDatabase();
+  const mirror = structuredClone(syntheticGame);
+  mirror.gameId = row.game_id + 10;
+  mirror.participants[1].championId = mirror.participants[0].championId;
+  assert.equal(m.insertGameFull(mirror, owner), true);
+  m.saveRiotGrade({
+    ...row,
+    game_id: mirror.gameId,
+    puuid: null,
+    champion_id: ownStats.champion_id,
+  });
+  db.prepare("INSERT INTO summoner (puuid, updated_at) VALUES (?, ?) ON CONFLICT DO NOTHING").run(
+    "fixture-opponent",
+    Date.now(),
+  );
+  const exclusive = structuredClone(syntheticGame);
+  exclusive.gameId = mirror.gameId + 1;
+  exclusive.participants[1].puuid = "untracked-opponent";
+  assert.equal(m.insertGameFull(exclusive, owner), true);
+  m.saveRiotGrade({ ...row, game_id: exclusive.gameId, puuid: owner });
+  const gradesBeforeRemoval = db.prepare("SELECT * FROM riot_grades ORDER BY game_id").all();
+  const plan = m.previewAccountRemoval(owner);
+  assert.equal(plan.deleted, 1);
+  assert.ok(plan.reassigned > 0);
+  assert.deepEqual(m.removeAccount(owner), plan);
+  assert.equal(m.getMatchDetail(exclusive.gameId), null);
+  assert.equal(
+    db.prepare("SELECT puuid FROM games WHERE game_id=?").get(mirror.gameId).puuid,
+    "fixture-opponent",
+  );
+  assert.equal(m.getMatchDetail(mirror.gameId).stats.riot_grade, null);
+  assert.deepEqual(
+    db.prepare("SELECT * FROM riot_grades ORDER BY game_id").all(),
+    gradesBeforeRemoval,
+  );
+  assert.deepEqual(db.pragma("foreign_key_check"), []);
+  assert.equal(db.pragma("integrity_check", { simple: true }), "ok");
+  console.log("PASS account removal retains grades and hides ambiguous reassigned grades");
+
   let reads = 0,
     saves = 0;
   const capture = new m.GradeCapture(

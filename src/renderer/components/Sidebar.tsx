@@ -1,70 +1,11 @@
 import { NavLink } from "react-router-dom";
-import {
-  useState,
-  useCallback,
-  useEffect,
-  useRef,
-  type ComponentType,
-  type ReactNode,
-  type SVGProps,
-} from "react";
+import type { ComponentType, SVGProps } from "react";
 import { useLcuStatus } from "../hooks/useLcuStatus";
-import { useBackfill } from "../hooks/useBackfill";
-import { useRecapBadge } from "../hooks/useRecapBadge";
-import type { LcuStatus, SeasonSummary, UpdateInfo } from "../lib/types";
-import UpdateDialog from "./UpdateDialog";
-import { LOCALE } from "../lib/format";
-import {
-  MayhemIcon,
-  SwordsIcon,
-  TrophyIcon,
-  CrosshairIcon,
-  UsersIcon,
-  GlobeIcon,
-  TrendingUpIcon,
-  MedalIcon,
-  SettingsIcon,
-  RefreshIcon,
-  RadioIcon,
-  AwardIcon,
-  CalendarIcon,
-} from "./icons";
+import type { UpdateInfo } from "../lib/types";
+import { SettingsIcon, DownloadIcon } from "./icons";
+import { Brand, RecapBadge, statusColors, statusLabels, useNavEntries } from "./NavChrome";
 
-type IconComponent = ComponentType<SVGProps<SVGSVGElement>>;
-
-const links: { to: string; label: string; icon: IconComponent }[] = [
-  { to: "/", label: "Match History", icon: SwordsIcon },
-  { to: "/live", label: "Live Game", icon: RadioIcon },
-  { to: "/champions", label: "Champions", icon: TrophyIcon },
-  { to: "/augments", label: "Augments", icon: CrosshairIcon },
-  { to: "/friends", label: "Friends", icon: UsersIcon },
-  { to: "/trends", label: "Trends", icon: TrendingUpIcon },
-  { to: "/records", label: "Records", icon: MedalIcon },
-  { to: "/season", label: "Season Recap", icon: CalendarIcon },
-  { to: "/challenges", label: "Challenges", icon: AwardIcon },
-  { to: "/s-tracker", label: "S- Tracker", icon: TrophyIcon },
-  { to: "/global", label: "Total Stats", icon: GlobeIcon },
-];
-
-// The app is often left open for days, so a launch-only check would never
-// surface a release cut in the meantime.
-const UPDATE_POLL_MS = 6 * 60 * 60 * 1000;
-
-const statusColors: Record<LcuStatus, string> = {
-  connected: "bg-lol-win",
-  ingame: "bg-sky-400",
-  connecting: "bg-amber-500",
-  disconnected: "bg-lol-loss",
-};
-
-const statusLabels: Record<LcuStatus, string> = {
-  connected: "Connected",
-  ingame: "In Game",
-  connecting: "Connecting...",
-  disconnected: "Disconnected",
-};
-
-function NavItem({
+function SidebarLink({
   to,
   label,
   icon: Icon,
@@ -75,20 +16,21 @@ function NavItem({
 }: {
   to: string;
   label: string;
-  icon: IconComponent;
+  icon: ComponentType<SVGProps<SVGSVGElement>>;
   search?: string;
   title?: string;
-  badge?: ReactNode;
+  badge?: string;
   onClick?: () => void;
 }) {
   return (
     <NavLink
       to={search ? { pathname: to, search } : to}
       end={to === "/"}
-      title={title}
+      title={title ?? label}
+      aria-label={label}
       onClick={onClick}
       className={({ isActive }) =>
-        `flex items-center gap-3 px-3 py-2 rounded-md text-[13px] font-medium transition-colors ${
+        `relative flex items-center justify-center xl:justify-start gap-3 p-2 xl:px-3 rounded-md text-[13px] font-medium whitespace-nowrap transition-colors ${
           isActive
             ? "bg-lol-gold/10 text-lol-gold"
             : "text-lol-text hover:bg-white/5 hover:text-lol-text-bright"
@@ -96,206 +38,71 @@ function NavItem({
       }
     >
       <Icon className="w-4 h-4 shrink-0" />
-      <span>{label}</span>
-      {badge}
+      <span className="hidden xl:inline">{label}</span>
+      {badge && (
+        <>
+          <RecapBadge name={badge} className="hidden xl:inline ml-auto" />
+          <span className="xl:hidden absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-lol-gold" />
+        </>
+      )}
     </NavLink>
   );
 }
 
-// A season that has just ended, named beside the Season Recap link until the
-// recap has been opened
-function RecapBadge({ season }: { season: SeasonSummary }) {
-  return (
-    <span className="ml-auto rounded-full border border-lol-gold/40 bg-lol-gold/15 px-1.5 py-0.5 text-[10px] font-semibold leading-none text-lol-gold">
-      {season.name}
-    </span>
-  );
-}
-
-export default function Sidebar() {
+// The links down the left of the window, for anyone who prefers them there to
+// the header. Window controls sit in a strip above the page instead. On a
+// narrow window it shrinks to a rail of icons, leaving the page the room it
+// has under the header.
+export default function Sidebar({
+  update,
+  onUpdate,
+}: {
+  update: UpdateInfo | null;
+  onUpdate: () => void;
+}) {
   const status = useLcuStatus();
-  const { running: backfilling, progress, percent } = useBackfill();
-  const recapBadge = useRecapBadge();
-  const [refreshing, setRefreshing] = useState(false);
-  const [lastResult, setLastResult] = useState<string | null>(null);
-  const [version, setVersion] = useState("");
-  const [update, setUpdate] = useState<UpdateInfo | null>(null);
-  const [showUpdateDialog, setShowUpdateDialog] = useState(false);
-
-  // Read inside the poll instead of as an effect dep, so opening the dialog
-  // doesn't restart the interval
-  const dialogOpenRef = useRef(false);
-  useEffect(() => {
-    dialogOpenRef.current = showUpdateDialog;
-  }, [showUpdateDialog]);
-
-  useEffect(() => {
-    window.api.getVersion().then(setVersion);
-
-    const check = () =>
-      window.api.checkForUpdate().then((info) => {
-        // A failed poll shouldn't clear a badge an earlier check earned
-        setUpdate((prev) => (info.error && prev ? prev : info));
-      });
-    check();
-    const timer = setInterval(() => {
-      // Skip while the dialog is up: swapping the release out from under an
-      // in-progress download would invalidate the URL being installed
-      if (!dialogOpenRef.current) check();
-    }, UPDATE_POLL_MS);
-    return () => clearInterval(timer);
-  }, []);
-
-  useEffect(() => {
-    if (!lastResult) return;
-    const timer = setTimeout(() => setLastResult(null), 10_000);
-    return () => clearTimeout(timer);
-  }, [lastResult]);
-
-  useEffect(
-    () =>
-      window.api.onBackfillDone((result) => {
-        if ("error" in result) {
-          setLastResult(`Import failed: ${result.error}`);
-        } else if (result.cancelled) {
-          setLastResult(`Import stopped after ${result.added.toLocaleString(LOCALE)} game(s)`);
-        } else if (result.added > 0) {
-          setLastResult(`Imported ${result.added.toLocaleString(LOCALE)} past game(s)`);
-        }
-      }),
-    [],
-  );
-
-  const handleRefresh = useCallback(async () => {
-    setRefreshing(true);
-    setLastResult(null);
-    try {
-      const result = await window.api.refreshGames();
-      if ("error" in result) {
-        setLastResult(`Error: ${result.error}`);
-      } else {
-        setLastResult(
-          result.newGames > 0
-            ? `Found ${result.newGames.toLocaleString(LOCALE)} new game(s)`
-            : "No new games",
-        );
-      }
-    } catch (err: any) {
-      // Strip Electron's IPC wrapper so only the underlying message shows
-      const message = String(err?.message ?? err).replace(
-        /^Error invoking remote method '[^']+': (Error: )?/,
-        "",
-      );
-      setLastResult(`Error: ${message}`);
-    } finally {
-      setRefreshing(false);
-    }
-  }, []);
+  const entries = useNavEntries();
 
   return (
-    <nav className="w-56 bg-lol-card/60 border-r border-lol-border/60 flex flex-col shrink-0">
-      <div className="titlebar-drag h-14 shrink-0 flex items-center gap-2.5 px-4 border-b border-lol-border/40">
-        <div className="w-7 h-7 rounded-lg border border-lol-gold/40 bg-lol-gold/10 flex items-center justify-center shrink-0">
-          <MayhemIcon className="w-5 h-5 text-lol-gold" />
-        </div>
-        <div className="flex flex-col justify-center leading-none">
-          <span className="font-bold text-[15px] tracking-[0.02em] text-lol-text-bright">
-            Mayhem
-          </span>
-          <span className="text-[8px] font-semibold uppercase tracking-[0.35em] text-lol-text/80 mt-1">
-            Tracker
-          </span>
-        </div>
+    <nav className="w-14 xl:w-56 shrink-0 flex flex-col border-r border-lol-border/60 bg-lol-card/60">
+      {/* As tall as the strip above the page, so the two dividers meet */}
+      <div className="titlebar-drag h-11 shrink-0 flex items-center justify-center xl:justify-start xl:px-4 border-b border-lol-border/60">
+        <Brand nameClassName="hidden xl:inline" />
       </div>
-      <div className="flex flex-col gap-0.5 p-3 mt-1 flex-1">
-        {links.map((link) =>
-          link.to === "/season" && recapBadge.season ? (
-            // Straight to the season that ended, whichever one the page would
-            // otherwise open on
-            <NavItem
-              key={link.to}
-              {...link}
-              search={`?season=${encodeURIComponent(recapBadge.season.id)}`}
-              title={`Your ${recapBadge.season.name} recap is ready to share`}
-              badge={<RecapBadge season={recapBadge.season} />}
-              onClick={recapBadge.dismiss}
-            />
-          ) : (
-            <NavItem key={link.to} {...link} />
-          ),
-        )}
+
+      <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-0.5 p-2 xl:p-3">
+        {entries.map((entry) => (
+          <SidebarLink key={entry.to} {...entry} />
+        ))}
       </div>
-      <div className="px-3 pb-1">
-        <NavItem to="/settings" label="Settings" icon={SettingsIcon} />
+
+      <div className="px-2 xl:px-3 pb-2">
+        <SidebarLink to="/settings" label="Settings" icon={SettingsIcon} />
       </div>
-      <div className="p-3 border-t border-lol-border/60 flex flex-col gap-2">
-        {lastResult && !backfilling && (
-          <span className="text-xs text-lol-text truncate" title={lastResult}>
-            {lastResult}
-          </span>
-        )}
-        {backfilling && (
-          <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-lol-text truncate">
-              {progress && progress.total > 0
-                ? `Importing history ${progress.current.toLocaleString(LOCALE)}/${progress.total.toLocaleString(LOCALE)}`
-                : "Importing history..."}
-            </span>
-            <div className="h-1 rounded-full bg-lol-border overflow-hidden">
-              <div
-                className="h-full bg-lol-gold transition-all duration-300"
-                style={{ width: `${percent}%` }}
-              />
-            </div>
-          </div>
-        )}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${statusColors[status]}`} />
-            <span className="text-xs text-lol-text">{statusLabels[status]}</span>
-          </div>
-          {backfilling ? (
-            <button
-              onClick={() => window.api.cancelBackfill()}
-              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-lol-border bg-white/5 text-lol-text hover:text-lol-text-bright hover:bg-white/10 transition-colors"
-            >
-              Cancel
-            </button>
-          ) : (
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-lol-gold/25 bg-lol-gold/10 text-lol-gold hover:bg-lol-gold/20 disabled:opacity-50 transition-colors"
-            >
-              <RefreshIcon className={`w-3 h-3 ${refreshing ? "animate-spin" : ""}`} />
-              {refreshing ? "Syncing..." : "Sync"}
-            </button>
-          )}
-        </div>
-        <div className="flex items-center justify-between mt-1">
+
+      <div className="flex flex-col gap-2 p-2 xl:p-3 border-t border-lol-border/60">
+        {update && (
           <button
-            onClick={() =>
-              window.api.openUrl(
-                `https://github.com/Yhprum/mayhem-tracker/releases/tag/v${version}`,
-              )
-            }
-            className="text-[10px] text-lol-text/50 hover:text-lol-text transition-colors cursor-pointer"
+            onClick={onUpdate}
+            title={`Update to version ${update.latest}`}
+            aria-label={`Update to version ${update.latest}`}
+            className="flex items-center justify-center gap-1.5 rounded-md border border-lol-gold/30 bg-lol-gold/10 p-2 xl:px-2.5 xl:py-1.5 text-xs text-lol-gold hover:bg-lol-gold/20 transition-colors"
           >
-            v{version}
+            <DownloadIcon className="w-3.5 h-3.5 shrink-0" />
+            <span className="hidden xl:inline">Update to v{update.latest}</span>
           </button>
-          {update?.hasUpdate && (
-            <button
-              onClick={() => setShowUpdateDialog(true)}
-              className="text-[10px] text-lol-gold hover:text-lol-gold-light transition-colors cursor-pointer"
-            >
-              v{update.latest} available
-            </button>
-          )}
+        )}
+        <div
+          role="status"
+          title={`League client: ${statusLabels[status]}`}
+          className="flex items-center justify-center xl:justify-start gap-2 py-1 xl:px-1 xl:py-0"
+        >
+          <span className={`h-2 w-2 shrink-0 rounded-full ${statusColors[status]}`} />
+          <span className="hidden xl:inline text-xs text-lol-text">
+            League client: {statusLabels[status]}
+          </span>
         </div>
       </div>
-      {showUpdateDialog && update && (
-        <UpdateDialog update={update} onClose={() => setShowUpdateDialog(false)} />
-      )}
     </nav>
   );
 }

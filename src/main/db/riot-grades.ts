@@ -41,4 +41,8 @@ export function saveRiotGrade(row: RiotGrade): boolean {
 // was supplied in EOG, it must also match the game's owner.
 export const RIOT_GRADE_MATCH_SQL = `(SELECT rg.grade FROM riot_grades rg
   WHERE rg.game_id = g.game_id AND rg.champion_id = ps.champion_id
-  AND (rg.puuid IS NULL OR rg.puuid = g.puuid))`;
+  AND (rg.puuid = g.puuid OR (rg.puuid IS NULL AND (
+    NOT EXISTS (SELECT 1 FROM match_participants p WHERE p.game_id = g.game_id)
+    OR (SELECT COUNT(*) = 1 AND MAX(p.puuid) = g.puuid FROM match_participants p
+        WHERE p.game_id = g.game_id AND p.champion_id = rg.champion_id)
+  ))))`;
