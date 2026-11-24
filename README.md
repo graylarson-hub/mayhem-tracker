@@ -2,6 +2,14 @@
 
 Desktop app for tracking ARAM Mayhem match history in League of Legends. Connects to the League Client (LCU) to automatically record matches and display stats.
 
+## About this fork
+
+This fork builds on [Yhprum’s Mayhem Tracker](https://github.com/Yhprum/mayhem-tracker) for players working toward an S− or better on every champion.
+
+- **S-Tracker** shows which champions still need an S− and which have earned one, using challenge progress from the League client.
+- **Available Champions** shows your current champion and the shared bench during Mayhem champion select. Open the **Available** tab in S-Tracker to see which picks still need an S−.
+- **Riot grade history** saves the letter Riot awards on the post-game screen, including plus and minus grades. Leave the tracker running through the end of the game to capture the grade. Grades can also be captured in regular ARAM.
+
 <img width="1280" height="820" alt="image" src="https://github.com/user-attachments/assets/cdce7dae-d96e-4be0-8d0a-bf9c7ee245d3" />
 
 ## Features
@@ -18,7 +26,9 @@ Desktop app for tracking ARAM Mayhem match history in League of Legends. Connect
 
 ## Download
 
-Grab `MayhemTracker.exe` from the [latest release](https://github.com/Yhprum/mayhem-tracker/releases/latest) and run it. It's a portable Windows build with no installer, so it can live anywhere.
+To use the fork features on Windows, follow [Development](#development) to install the dependencies, then run `npm run dist`. The portable executable is written to `dist\MayhemTracker.exe`.
+
+The original tracker is available from [Yhprum’s releases](https://github.com/Yhprum/mayhem-tracker/releases/latest).
 
 ## Usage
 
@@ -29,7 +39,7 @@ Grab `MayhemTracker.exe` from the [latest release](https://github.com/Yhprum/may
 
 You can re-run the import at any time from **Settings → Backfill match history**, which is also how you finish one you cancelled. Games already stored stay readable with the client closed; only importing and recording need it open.
 
-Match data lives in `%APPDATA%\mayhem-tracker\data`, with automatic backups alongside it. The app checks GitHub for new releases and offers to update itself when one lands.
+Development and portable builds share `%APPDATA%\mayhem-tracker\data\matches.db`. The fork displays upstream release notes. Install updated fork builds manually. See [persistent data and backups](PERSISTENT-DATA.md).
 
 ## Support
 
